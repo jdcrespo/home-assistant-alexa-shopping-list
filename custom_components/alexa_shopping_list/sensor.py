@@ -39,7 +39,7 @@ class AlexaShoppingListSyncSensor(SensorEntity):
     async def async_update(self) -> None:
         try:
 
-            updated = await self.alexa.sync(_LOGGER)
+            updated = await self.alexa.sync()
             if updated == True:
                 _LOGGER.debug("Firing alexa_shopping_list_changed event")
                 self.hass.bus.async_fire("alexa_shopping_list_changed")

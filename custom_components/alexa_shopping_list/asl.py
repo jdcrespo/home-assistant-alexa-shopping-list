@@ -12,12 +12,14 @@ import hashlib
 
 class AlexaShoppingListSync:
 
-    def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None):
+    def __init__(self, ip="localhost", port=4000, sync_mins=60, hasl_path=None, hasl_refresh=None, logger=None):
         self.uri = "ws://"+ip+":"+str(port)
         self._hasl_path = hasl_path
         self._hasl_refresh = hasl_refresh
         self._setup_cached_list(sync_mins * 60)
         self._is_syncing = False
+        self._logger = logger
+        self._local_has_changed = False
 
     # ============================================================
     # Helpers
@@ -143,7 +145,9 @@ class AlexaShoppingListSync:
 
 
     async def homeassistant_shopping_list_updated(self, event):
-        await self.sync(None, True)
+        if self._local_has_changed == False:
+            await self._debug_log_entry("shopping list updated, setting update flag!!")
+            self._local_has_changed = True
     
 
     def _export_ha_shopping_list(self, items):
@@ -178,30 +182,32 @@ class AlexaShoppingListSync:
         return None
     
 
-    async def _debug_log_entry(self, logger=None, entry=""):
-        if logger == None:
+    async def _debug_log_entry(self, entry=""):
+        if self._logger == None:
             return
-        logger.debug(entry)
+        self._logger.debug(entry)
 
 
-    async def sync(self, logger=None, force=False):
-        if os.path.exists(self._hasl_path) == False:
-            return False
+    async def sync(self, force=False, toAlexa=False):
+        await self._debug_log_entry(f"starting sync, (has_local_changes: {self._local_has_changed})")
         
-        if self._cached_list_needs_updating() == False and force == False:
+        if self._cached_list_needs_updating() == False and force == False and self._local_has_changed == False:
             return False
         
         if self._is_syncing == True:
             return False
         self._is_syncing = True
 
+        await self._debug_log_entry("can sync")
+
         loop = asyncio.get_running_loop()
         ha_list = await loop.run_in_executor(None, self._read_ha_shopping_list)
         original_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
+        await self._debug_log_entry("ha list: "+json.dumps(ha_list))
         
-        await self._debug_log_entry(logger, "Loading Alexa shopping list")
+        await self._debug_log_entry( "Loading Alexa shopping list")
         alexa_list = await self._get_list(force)
-        await self._debug_log_entry(logger, "Alexa list: "+json.dumps(alexa_list))
+        await self._debug_log_entry("Alexa list: "+json.dumps(alexa_list))
 
         to_add = []
         to_remove = []
@@ -211,33 +217,35 @@ class AlexaShoppingListSync:
                 if item['name'] in alexa_list:
                     to_remove.append(item['name'])
                 
-            if item['name'] not in alexa_list:
+            if item['name'] not in alexa_list and (toAlexa or self._local_has_changed):
                 to_add.append(item['name'])
         
-        await self._debug_log_entry(logger, "To add to alexa: "+json.dumps(to_add))
+        await self._debug_log_entry("To add to alexa: "+json.dumps(to_add))
         for item in to_add:
             await self._add_item(item)
         
-        await self._debug_log_entry(logger, "To remove from alexa: "+json.dumps(to_remove))
+        await self._debug_log_entry("To remove from alexa: "+json.dumps(to_remove))
         for item in to_remove:
             await self._remove_item(item)
         
         refreshed_items = await self._get_list()
-        await self._debug_log_entry(logger, "Refreshed Alexa list: "+json.dumps(refreshed_items))
-        await self._debug_log_entry(logger, "Exporting new HA shopping list")
+        await self._debug_log_entry("Refreshed Alexa list: "+json.dumps(refreshed_items))
+        await self._debug_log_entry("Exporting new HA shopping list")
         await loop.run_in_executor(None, self._export_ha_shopping_list, refreshed_items)
         await self._hasl_refresh()
 
         self._is_syncing = False
+        if self._local_has_changed:
+            self._local_has_changed = False
 
-        await self._debug_log_entry(logger, "Original list hash: "+original_ha_list_hash)
+        await self._debug_log_entry("Original list hash: "+original_ha_list_hash)
         new_ha_list_hash = await loop.run_in_executor(None, self._ha_shopping_list_hash)
-        await self._debug_log_entry(logger, "New list hash: "+new_ha_list_hash)
+        await self._debug_log_entry("New list hash: "+new_ha_list_hash)
         if original_ha_list_hash != new_ha_list_hash:
-            await self._debug_log_entry(logger, "List changed")
+            await self._debug_log_entry("List changed")
             return True
         else:
-            await self._debug_log_entry(logger, "List did not change")
+            await self._debug_log_entry("List did not change")
             return False
 
 

@@ -26,14 +26,15 @@ async def async_setup_entry(hass, entry):
             entry.data[CONF_PORT],
             entry.data[CONF_SYNC_MINS],
             hass.config.path(".shopping_list.json"),
-            hass.data["shopping_list"].async_load
+            hass.data["shopping_list"].async_load,
+            _LOGGER
         )
 
     except Exception as e:
         _LOGGER.error(f"Error during async_setup_entry: {e}", exc_info=True)
         return False
     
-    # hass.bus.async_listen("shopping_list_updated", alexa.homeassistant_shopping_list_updated)
+    hass.bus.async_listen("shopping_list_updated", alexa.homeassistant_shopping_list_updated)
     hass.data[DOMAIN][entry.entry_id] = alexa
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
@@ -54,7 +55,7 @@ class AlexaServices:
         self.logger.debug("Alexa Sync Service")
 
         try:
-            updated = await self.alexa.sync(self.logger, True)
+            updated = await self.alexa.sync(force=True)
             if updated == True:
                 _LOGGER.debug("Firing alexa_shopping_list_changed event")
                 self.hass.bus.async_fire("alexa_shopping_list_changed")
